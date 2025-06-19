@@ -5,8 +5,8 @@ declare_id!("FoEPCgMFsBCLuopKjM4mzHiQxPqE46oAuMvY6WvgbgN");
 use mpl_core::{
     accounts::BaseCollectionV1,
     fetch_plugin,
-    instructions::CreateCollectionV1CpiBuilder,
-    types::{Attribute, Attributes, Plugin, PluginType, PluginAuthorityPair},
+    instructions::{CreateCollectionV1CpiBuilder, CreateV2CpiBuilder},
+    types::{AppDataInitInfo, Attribute, Attributes, ExternalPluginAdapterInitInfo, ExternalPluginAdapterSchema, PermanentBurnDelegate, PermanentFreezeDelegate, PermanentTransferDelegate, Plugin, PluginAuthority, PluginAuthorityPair, PluginType, UpdateAuthority},
     ID as MPL_CORE_ID
 };
 
@@ -90,6 +90,96 @@ pub fn create_ticket(ctx: Context<CreateTicket>, args: CreateTicketArgs) -> Resu
         .find(|attr| attr.key == "Capacity")
         .ok_or(ErrorCode::MissingAttribute)?;
 
+    // Unwrap the capacity attribute value
+    let capacity = capacity_attribute
+        .value
+        .parse::<u32>()
+        .map_err(|_| ErrorCode::NumericOverflow)?;
+
+    require!(
+        ctx.accounts.event.num_minted < capacity,
+        ErrorCode::MaximumTicketsReached
+    );
+
+    let mut ticket_plugin: Vec<PluginAuthorityPair> = vec![];
+
+    // Add an attribute Plugin that will hold the ticket details
+    let attribute_list: Vec<Attribute> = vec![
+        Attribute {
+            key: "Ticket Number".to_string(),
+            value: ctx
+                .accounts
+                .event
+                .num_minted
+                .checked_add(1)
+                .ok_or(ErrorCode::NumericOverflow)?
+                .to_string()
+        },
+        Attribute {
+            key: "Hall".to_string(),
+            value: args.hall,
+        },
+        Attribute {
+            key: "Section".to_string(),
+            value: args.section,
+        },
+        Attribute {
+            key: "Row".to_string(),
+            value: args.row,
+        },
+        Attribute {
+            key: "Seat".to_string(),
+            value: args.seat,
+        },
+        Attribute {
+            key: "Price".to_string(),
+            value: args.price.to_string(),
+        }
+    ];
+
+    ticket_plugin.push(PluginAuthorityPair {
+        plugin: Plugin::Attributes(Attributes { attribute_list }),
+        authority: Some(PluginAuthority::UpdateAuthority),
+    });
+
+    ticket_plugin.push(PluginAuthorityPair {
+        plugin: Plugin::PermanentFreezeDelegate(PermanentFreezeDelegate{ frozen: false }),
+        authority: Some(PluginAuthority::UpdateAuthority),
+    });
+
+    ticket_plugin.push(PluginAuthorityPair {
+        plugin: Plugin::PermanentBurnDelegate(PermanentBurnDelegate{}),
+        authority: Some(PluginAuthority::UpdateAuthority),
+    });
+
+    ticket_plugin.push(PluginAuthorityPair {
+        plugin: Plugin::PermanentTransferDelegate(PermanentTransferDelegate{}),
+        authority: Some(PluginAuthority::UpdateAuthority),
+    });
+
+    let ticket_external_plugin: Vec<ExternalPluginAdapterInitInfo> = vec![ExternalPluginAdapterInitInfo::AppData(AppDataInitInfo {
+        init_plugin_authority: Some(PluginAuthority::UpdateAuthority),
+        data_authority: PluginAuthority::Address {
+            address: args.venue_authority,
+        },
+        schema: Some(ExternalPluginAdapterSchema::Binary),
+    })];
+
+    let signer_seeds = &[b"manager".as_ref(), &[ctx.accounts.manager.bump]];
+
+    // create ticket
+    CreateV2CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+        .asset(&ctx.accounts.ticket.to_account_info())
+        .collection(Some(&ctx.accounts.event.to_account_info()))
+        .payer(&ctx.accounts.payer.to_account_info())
+        .authority(Some(&ctx.accounts.manager.to_account_info()))
+        .owner(Some(&ctx.accounts.signer.to_account_info()))
+        .system_program(&ctx.accounts.system_program.to_account_info())
+        .name(args.name)
+        .uri(args.uri)
+        .plugins(ticket_plugin)
+        .external_plugin_adapters(ticket_external_plugin)
+        .invoke_signed(&[signer_seeds])?;
 
     Ok(())
 }
@@ -149,7 +239,36 @@ pub struct CreateTicket<'info> {
     pub event: Account<'info, BaseCollectionV1>,
     #[account(mut)]
     pub ticket: Signer<'info>,
-    pub system_program: Program<'info, System>
+    pub system_program: Program<'info, System>,
+    /// CHECK: This is checked by the address constraint
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ScanTicket<'info> {
+    pub owner: Signer<'info>,
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        seeds = [b"manager"],
+        bump = manager.bump
+    )]
+    pub manager: Account<'info, Manager>,
+    #[account(
+        mut,
+        constraint = ticket.name == owner.key(),
+        constraint = ticket.update_authority == UpdateAuthority::Collection(event.key()),
+    )]
+    pub ticket: Account<'info, BaseCollectionV1>,
+    #[account(
+        mut,
+        constraint = event.update_authority == manager.key()
+    )]
+    pub event: Account<'info, BaseCollectionV1>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: This is checked by the address constraint
+    pub mpl_core_program: UncheckedAccount<'info>,
 }
 
 #[account]
@@ -180,11 +299,17 @@ pub struct CreateTicketArgs {
     pub row: String,
     pub seat: String,
     pub price: u64,
-    pub venue_authority: u64,
+    pub venue_authority: Pubkey,
 }
 
 #[error_code]
 pub enum ErrorCode {
     #[msg("The attribute is missing.")]
-    MissingAttribute
+    MissingAttribute,
+    #[msg("Invalid Authority")]
+    InvalidAuthority,
+    #[msg("Numeric Overflow")]
+    NumericOverflow,
+    #[msg("MaximumTicketsReached")]
+    MaximumTicketsReached,
 }
