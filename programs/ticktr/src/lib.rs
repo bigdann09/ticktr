@@ -5,7 +5,7 @@ declare_id!("FoEPCgMFsBCLuopKjM4mzHiQxPqE46oAuMvY6WvgbgN");
 use mpl_core::{
     accounts::{BaseAssetV1, BaseCollectionV1},
     fetch_external_plugin_adapter_data_info, fetch_plugin,
-    instructions::{CreateCollectionV1CpiBuilder, UpdatePluginV1CpiBuilder, CreateV2CpiBuilder, WriteExternalPluginAdapterDataV1CpiBuilder},
+    instructions::{CreateCollectionV2CpiBuilder, UpdatePluginV1CpiBuilder, CreateV2CpiBuilder, WriteExternalPluginAdapterDataV1CpiBuilder},
     types::{AppDataInitInfo, Attribute, Attributes, ExternalPluginAdapterInitInfo, ExternalPluginAdapterKey, ExternalPluginAdapterSchema, PermanentBurnDelegate, PermanentFreezeDelegate, PermanentTransferDelegate, Plugin, PluginAuthority, PluginAuthorityPair, PluginType, UpdateAuthority},
     ID as MPL_CORE_ID
 };
@@ -60,7 +60,7 @@ pub mod ticktr {
         });
 
         // create the collection that will hold the tickets
-        CreateCollectionV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+        CreateCollectionV2CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
             .collection(&ctx.accounts.event.to_account_info())
             .update_authority(Some(&ctx.accounts.manager.to_account_info()))
             .payer(&ctx.accounts.payer.to_account_info())
@@ -226,6 +226,9 @@ pub mod ticktr {
 
 #[derive(Accounts)]
 pub struct SetupManager<'info> {
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
     #[account(
         init,
         payer = authority,
@@ -281,7 +284,7 @@ pub struct CreateTicket<'info> {
     pub ticket: Signer<'info>,
     pub system_program: Program<'info, System>,
     /// CHECK: This is checked by the address constraint
-    pub mpl_core_program: UncheckedAccount<'info>,
+    pub mpl_core_program: UncheckedAccount<'info>
 }
 
 #[derive(Accounts)]
@@ -308,7 +311,7 @@ pub struct ScanTicket<'info> {
     pub event: Account<'info, BaseCollectionV1>,
     pub system_program: Program<'info, System>,
     /// CHECK: This is checked by the address constraint
-    pub mpl_core_program: UncheckedAccount<'info>,
+    pub mpl_core_program: UncheckedAccount<'info>
 }
 
 #[account]

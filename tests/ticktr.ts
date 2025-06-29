@@ -4,13 +4,27 @@ import { Ticktr } from "../target/types/ticktr";
 
 describe("ticktr", () => {
   // Configure the client to use the local cluster.
-  anchor.setProvider(anchor.AnchorProvider.env());
+  let provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
 
   const program = anchor.workspace.ticktr as Program<Ticktr>;
 
-  it("Is initialized!", async () => {
+  const manager = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("manager")],
+    program.programId
+  )[0];
+
+  it("setup manager account", async () => {
     // Add your test here.
-    const tx = await program.methods.initialize().rpc();
-    console.log("Your transaction signature", tx);
+    const tx = await program.methods.setupManager()
+    .accountsPartial({
+      signer: provider.wallet.publicKey,
+      payer: provider.wallet.publicKey,
+      manager,
+      systemProgram: anchor.web3.SystemProgram.programId
+    })
+    .rpc();
+
+    console.log(tx);
   });
 });
